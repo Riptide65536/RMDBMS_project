@@ -12,8 +12,10 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
+#include "transaction/txn_defs.h"
 
 class InsertExecutor : public AbstractExecutor {
    private:
@@ -42,15 +44,15 @@ class InsertExecutor : public AbstractExecutor {
         RmRecord rec(fh_->get_file_hdr().record_size);
         for (size_t i = 0; i < values_.size(); i++) {
             auto &col = tab_.cols[i];
-            auto &val = values_[i];
-            if (col.type != val.type) {
-                throw IncompatibleTypeError(coltype2str(col.type), coltype2str(val.type));
-            }
+            Value val = cast_value_to_col_type(values_[i], col);
             val.init_raw(col.len);
             memcpy(rec.data + col.offset, val.raw->data, col.len);
         }
         // Insert into record file
         rid_ = fh_->insert_record(rec.data, context_);
+        if (context_ != nullptr && context_->txn_ != nullptr) {
+            context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
+        }
         
         // Insert into index
         for(size_t i = 0; i < tab_.indexes.size(); ++i) {
@@ -63,6 +65,7 @@ class InsertExecutor : public AbstractExecutor {
                 offset += index.cols[i].len;
             }
             ih->insert_entry(key, rid_, context_->txn_);
+            delete[] key;
         }
         return nullptr;
     }

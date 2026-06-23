@@ -21,13 +21,16 @@ std::unordered_map<txn_id_t, Transaction *> TransactionManager::txn_map = {};
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
-    // Todo:
-    // 1. 判断传入事务参数是否为空指针
-    // 2. 如果为空指针，创建新事务
-    // 3. 把开始事务加入到全局事务表中
-    // 4. 返回当前事务指针
-    
-    return nullptr;
+    (void)log_manager;
+    if (txn == nullptr) {
+        txn = new Transaction(next_txn_id_++);
+    }
+    txn->set_start_ts(next_timestamp_++);
+    txn->set_state(TransactionState::GROWING);
+
+    std::unique_lock<std::mutex> lock(latch_);
+    TransactionManager::txn_map[txn->get_transaction_id()] = txn;
+    return txn;
 }
 
 /**
@@ -36,13 +39,27 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
  * @param {LogManager*} log_manager 日志管理器指针
  */
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
-    // Todo:
-    // 1. 如果存在未提交的写操作，提交所有的写操作
-    // 2. 释放所有锁
-    // 3. 释放事务相关资源，eg.锁集
-    // 4. 把事务日志刷入磁盘中
-    // 5. 更新事务状态
+    if (txn == nullptr) {
+        return;
+    }
 
+    auto write_set = txn->get_write_set();
+    while (!write_set->empty()) {
+        delete write_set->front();
+        write_set->pop_front();
+    }
+
+    auto lock_set = txn->get_lock_set();
+    for (const auto &lock_data_id : *lock_set) {
+        lock_manager_->unlock(txn, lock_data_id);
+    }
+    lock_set->clear();
+    txn->get_index_latch_page_set()->clear();
+    txn->get_index_deleted_page_set()->clear();
+    if (log_manager != nullptr) {
+        log_manager->flush_log_to_disk();
+    }
+    txn->set_state(TransactionState::COMMITTED);
 }
 
 /**
@@ -51,11 +68,40 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  * @param {LogManager} *log_manager 日志管理器指针
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
-    // Todo:
-    // 1. 回滚所有写操作
-    // 2. 释放所有锁
-    // 3. 清空事务相关资源，eg.锁集
-    // 4. 把事务日志刷入磁盘中
-    // 5. 更新事务状态
-    
+    if (txn == nullptr) {
+        return;
+    }
+
+    auto write_set = txn->get_write_set();
+    while (!write_set->empty()) {
+        auto *write_record = write_set->back();
+        write_set->pop_back();
+        auto fh = sm_manager_->fhs_.at(write_record->GetTableName()).get();
+        switch (write_record->GetWriteType()) {
+            case WType::INSERT_TUPLE:
+                fh->delete_record(write_record->GetRid(), nullptr);
+                break;
+            case WType::DELETE_TUPLE:
+                fh->insert_record(write_record->GetRid(), write_record->GetRecord().data);
+                break;
+            case WType::UPDATE_TUPLE:
+                fh->update_record(write_record->GetRid(), write_record->GetRecord().data, nullptr);
+                break;
+            default:
+                break;
+        }
+        delete write_record;
+    }
+
+    auto lock_set = txn->get_lock_set();
+    for (const auto &lock_data_id : *lock_set) {
+        lock_manager_->unlock(txn, lock_data_id);
+    }
+    lock_set->clear();
+    txn->get_index_latch_page_set()->clear();
+    txn->get_index_deleted_page_set()->clear();
+    if (log_manager != nullptr) {
+        log_manager->flush_log_to_disk();
+    }
+    txn->set_state(TransactionState::ABORTED);
 }

@@ -12,8 +12,10 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
+#include "transaction/txn_defs.h"
 
 class DeleteExecutor : public AbstractExecutor {
    private:
@@ -37,6 +39,22 @@ class DeleteExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
+        for (const auto &rid : rids_) {
+            auto record = fh_->get_record(rid, context_);
+            if (context_ != nullptr && context_->txn_ != nullptr) {
+                context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *record));
+            }
+            for (const auto &index : tab_.indexes) {
+                auto index_name = sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols);
+                auto ih_it = sm_manager_->ihs_.find(index_name);
+                if (ih_it == sm_manager_->ihs_.end()) {
+                    continue;
+                }
+                auto key = build_index_key(index, *record);
+                ih_it->second->delete_entry(key.data(), context_->txn_);
+            }
+            fh_->delete_record(rid, context_);
+        }
         return nullptr;
     }
 

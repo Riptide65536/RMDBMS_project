@@ -10,6 +10,19 @@ See the Mulan PSL v2 for more details. */
 
 #include "analyze.h"
 
+namespace {
+
+bool is_compatible_type(ColType lhs_type, ColType rhs_type) {
+    if (lhs_type == rhs_type) {
+        return true;
+    }
+    bool lhs_numeric = lhs_type == TYPE_INT || lhs_type == TYPE_FLOAT;
+    bool rhs_numeric = rhs_type == TYPE_INT || rhs_type == TYPE_FLOAT;
+    return lhs_numeric && rhs_numeric;
+}
+
+}  // namespace
+
 /**
  * @description: 分析器，进行语义分析和查询重写，需要检查不符合语义规定的部分
  * @param {shared_ptr<ast::TreeNode>} parse parser生成的结果集
@@ -22,7 +35,9 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
     {
         // 处理表名
         query->tables = std::move(x->tabs);
-        /** TODO: 检查表是否存在 */
+        for (auto &tab_name : query->tables) {
+            sm_manager_->db_.get_table(tab_name);
+        }
 
         // 处理target list，再target list中添加上表名，例如 a.id
         for (auto &sv_sel_col : x->cols) {
@@ -48,13 +63,34 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         get_clause(x->conds, query->conds);
         check_clause(query->tables, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse)) {
-        /** TODO: */
+        sm_manager_->db_.get_table(x->tab_name);
+        query->tables = {x->tab_name};
 
+        for (auto &sv_set_clause : x->set_clauses) {
+            SetClause set_clause;
+            set_clause.lhs = {.tab_name = x->tab_name, .col_name = sv_set_clause->col_name};
+            std::vector<ColMeta> all_cols;
+            get_all_cols(query->tables, all_cols);
+            set_clause.lhs = check_column(all_cols, set_clause.lhs);
+            set_clause.rhs = convert_sv_value(sv_set_clause->val);
+
+            auto &tab = sm_manager_->db_.get_table(x->tab_name);
+            auto col = tab.get_col(set_clause.lhs.col_name);
+            if (!is_compatible_type(col->type, set_clause.rhs.type)) {
+                throw IncompatibleTypeError(coltype2str(col->type), coltype2str(set_clause.rhs.type));
+            }
+            query->set_clauses.push_back(set_clause);
+        }
+
+        get_clause(x->conds, query->conds);
+        check_clause(query->tables, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::DeleteStmt>(parse)) {
+        sm_manager_->db_.get_table(x->tab_name);
         //处理where条件
         get_clause(x->conds, query->conds);
-        check_clause({x->tab_name}, query->conds);        
+        check_clause({x->tab_name}, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::InsertStmt>(parse)) {
+        sm_manager_->db_.get_table(x->tab_name);
         // 处理insert 的values值
         for (auto &sv_val : x->vals) {
             query->values.push_back(convert_sv_value(sv_val));
@@ -84,8 +120,12 @@ TabCol Analyze::check_column(const std::vector<ColMeta> &all_cols, TabCol target
         }
         target.tab_name = tab_name;
     } else {
-        /** TODO: Make sure target column exists */
-        
+        auto pos = std::find_if(all_cols.begin(), all_cols.end(), [&](const ColMeta &col) {
+            return col.tab_name == target.tab_name && col.name == target.col_name;
+        });
+        if (pos == all_cols.end()) {
+            throw ColumnNotFoundError(target.tab_name + '.' + target.col_name);
+        }
     }
     return target;
 }
@@ -138,7 +178,7 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;
         }
-        if (lhs_type != rhs_type) {
+        if (!is_compatible_type(lhs_type, rhs_type)) {
             throw IncompatibleTypeError(coltype2str(lhs_type), coltype2str(rhs_type));
         }
     }

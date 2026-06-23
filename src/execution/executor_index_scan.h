@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
 
@@ -65,16 +66,53 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        
+        scan_ = std::make_unique<RmScan>(fh_);
+        while (!scan_->is_end()) {
+            Rid candidate = scan_->rid();
+            auto record = fh_->get_record(candidate, context_);
+            if (record_satisfies_conditions(*record, cols_, fed_conds_)) {
+                rid_ = candidate;
+                return;
+            }
+            scan_->next();
+        }
+        rid_ = {fh_->get_file_hdr().num_pages, -1};
     }
 
     void nextTuple() override {
-        
+        if (scan_ == nullptr || scan_->is_end()) {
+            rid_ = {fh_->get_file_hdr().num_pages, -1};
+            return;
+        }
+        scan_->next();
+        while (!scan_->is_end()) {
+            Rid candidate = scan_->rid();
+            auto record = fh_->get_record(candidate, context_);
+            if (record_satisfies_conditions(*record, cols_, fed_conds_)) {
+                rid_ = candidate;
+                return;
+            }
+            scan_->next();
+        }
+        rid_ = {fh_->get_file_hdr().num_pages, -1};
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (is_end()) {
+            return nullptr;
+        }
+        return fh_->get_record(rid_, context_);
     }
+
+    bool is_end() const override { return scan_ == nullptr || scan_->is_end(); }
+
+    size_t tupleLen() const override { return len_; }
+
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+
+    std::string getType() override { return "IndexScanExecutor"; }
+
+    ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return rid_; }
 };

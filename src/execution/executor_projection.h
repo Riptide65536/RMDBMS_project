@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
 
@@ -39,13 +40,33 @@ class ProjectionExecutor : public AbstractExecutor {
         len_ = curr_offset;
     }
 
-    void beginTuple() override {}
+    void beginTuple() override { prev_->beginTuple(); }
 
-    void nextTuple() override {}
+    void nextTuple() override { prev_->nextTuple(); }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (is_end()) {
+            return nullptr;
+        }
+        auto prev_record = prev_->Next();
+        auto record = std::make_unique<RmRecord>(len_);
+        for (size_t i = 0; i < sel_idxs_.size(); ++i) {
+            const auto &prev_col = prev_->cols()[sel_idxs_[i]];
+            const auto &curr_col = cols_[i];
+            memcpy(record->data + curr_col.offset, prev_record->data + prev_col.offset, prev_col.len);
+        }
+        return record;
     }
 
-    Rid &rid() override { return _abstract_rid; }
+    bool is_end() const override { return prev_->is_end(); }
+
+    size_t tupleLen() const override { return len_; }
+
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+
+    std::string getType() override { return "ProjectionExecutor"; }
+
+    ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
+
+    Rid &rid() override { return prev_->rid(); }
 };

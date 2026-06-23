@@ -12,8 +12,10 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
+#include "transaction/txn_defs.h"
 
 class UpdateExecutor : public AbstractExecutor {
    private:
@@ -38,7 +40,36 @@ class UpdateExecutor : public AbstractExecutor {
         context_ = context;
     }
     std::unique_ptr<RmRecord> Next() override {
-        
+        for (const auto &rid : rids_) {
+            auto old_record = fh_->get_record(rid, context_);
+            if (context_ != nullptr && context_->txn_ != nullptr) {
+                context_->txn_->append_write_record(new WriteRecord(WType::UPDATE_TUPLE, tab_name_, rid, *old_record));
+            }
+
+            RmRecord new_record(*old_record);
+            for (const auto &set_clause : set_clauses_) {
+                auto col = tab_.get_col(set_clause.lhs.col_name);
+                Value rhs = cast_value_to_col_type(set_clause.rhs, *col);
+                rhs.init_raw(col->len);
+                memcpy(new_record.data + col->offset, rhs.raw->data, col->len);
+            }
+
+            for (const auto &index : tab_.indexes) {
+                auto index_name = sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols);
+                auto ih_it = sm_manager_->ihs_.find(index_name);
+                if (ih_it == sm_manager_->ihs_.end()) {
+                    continue;
+                }
+                auto old_key = build_index_key(index, *old_record);
+                auto new_key = build_index_key(index, new_record);
+                if (memcmp(old_key.data(), new_key.data(), index.col_tot_len) != 0) {
+                    ih_it->second->delete_entry(old_key.data(), context_->txn_);
+                    ih_it->second->insert_entry(new_key.data(), rid, context_->txn_);
+                }
+            }
+
+            fh_->update_record(rid, new_record.data, context_);
+        }
         return nullptr;
     }
 

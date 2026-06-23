@@ -167,6 +167,21 @@ void *client_handler(void *sock_fd) {
                     outfile.close();
                 }
             }
+        } else {
+            yy_delete_buffer(buf);
+            finish_analyze = true;
+            pthread_mutex_unlock(buffer_mutex);
+
+            const char *msg = "syntax error";
+            memcpy(data_send, msg, strlen(msg));
+            data_send[strlen(msg)] = '\n';
+            data_send[strlen(msg) + 1] = '\0';
+            offset = strlen(msg) + 1;
+
+            std::fstream outfile;
+            outfile.open("output.txt", std::ios::out | std::ios::app);
+            outfile << "failure\n";
+            outfile.close();
         }
         if(finish_analyze == false) {
             yy_delete_buffer(buf);

@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution_defs.h"
 #include "execution_manager.h"
 #include "executor_abstract.h"
+#include "executor_utils.h"
 #include "index/ix.h"
 #include "system/sm.h"
 
@@ -24,6 +25,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
 
     std::vector<Condition> fed_conds_;          // join条件
     bool isend;
+    std::unique_ptr<RmRecord> left_tuple_;
+    std::unique_ptr<RmRecord> right_tuple_;
 
    public:
     NestedLoopJoinExecutor(std::unique_ptr<AbstractExecutor> left, std::unique_ptr<AbstractExecutor> right, 
@@ -44,16 +47,103 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
+        isend = false;
+        left_->beginTuple();
+        if (left_->is_end()) {
+            isend = true;
+            return;
+        }
+        left_tuple_ = left_->Next();
 
+        right_->beginTuple();
+        if (right_->is_end()) {
+            isend = true;
+            return;
+        }
+
+        while (true) {
+            while (!right_->is_end()) {
+                right_tuple_ = right_->Next();
+                if (record_satisfies_conditions(NextTempRecord(), cols_, fed_conds_)) {
+                    return;
+                }
+                right_->nextTuple();
+            }
+
+            left_->nextTuple();
+            if (left_->is_end()) {
+                isend = true;
+                left_tuple_.reset();
+                right_tuple_.reset();
+                return;
+            }
+            left_tuple_ = left_->Next();
+            right_->beginTuple();
+            if (right_->is_end()) {
+                isend = true;
+                left_tuple_.reset();
+                right_tuple_.reset();
+                return;
+            }
+        }
     }
 
     void nextTuple() override {
-        
+        if (isend) {
+            return;
+        }
+        right_->nextTuple();
+        while (true) {
+            while (!right_->is_end()) {
+                right_tuple_ = right_->Next();
+                if (record_satisfies_conditions(NextTempRecord(), cols_, fed_conds_)) {
+                    return;
+                }
+                right_->nextTuple();
+            }
+
+            left_->nextTuple();
+            if (left_->is_end()) {
+                isend = true;
+                left_tuple_.reset();
+                right_tuple_.reset();
+                return;
+            }
+            left_tuple_ = left_->Next();
+            right_->beginTuple();
+            if (right_->is_end()) {
+                isend = true;
+                left_tuple_.reset();
+                right_tuple_.reset();
+                return;
+            }
+        }
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (isend || left_tuple_ == nullptr || right_tuple_ == nullptr) {
+            return nullptr;
+        }
+        return std::make_unique<RmRecord>(NextTempRecord());
     }
 
+    bool is_end() const override { return isend; }
+
+    size_t tupleLen() const override { return len_; }
+
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+
+    std::string getType() override { return "NestedLoopJoinExecutor"; }
+
+    ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
+
     Rid &rid() override { return _abstract_rid; }
+
+   private:
+    RmRecord NextTempRecord() const {
+        RmRecord record(len_);
+        memcpy(record.data, left_tuple_->data, left_->tupleLen());
+        memcpy(record.data + left_->tupleLen(), right_tuple_->data, right_->tupleLen());
+        return record;
+    }
 };
