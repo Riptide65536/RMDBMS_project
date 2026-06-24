@@ -106,3 +106,12 @@ struct SetClause {
     TabCol lhs;
     Value rhs;
 };
+
+enum AggType { AGG_COUNT, AGG_MAX, AGG_MIN, AGG_SUM };
+
+struct AggregateExpr {
+    AggType type;
+    bool is_count_star;
+    TabCol col;
+    std::string alias;
+};

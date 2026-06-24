@@ -43,6 +43,7 @@ typedef enum PlanTag{
     T_NestLoop,
     T_SortMerge,    // sort merge join
     T_Sort,
+    T_Aggregate,
     T_Projection
 } PlanTag;
 
@@ -132,6 +133,22 @@ class SortPlan : public Plan
         TabCol sel_col_;
         bool is_desc_;
         
+};
+
+class AggregatePlan : public Plan
+{
+    public:
+        AggregatePlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<AggregateExpr> aggregates,
+                      std::vector<TabCol> sel_cols) {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            aggregates_ = std::move(aggregates);
+            sel_cols_ = std::move(sel_cols);
+        }
+        ~AggregatePlan(){}
+        std::shared_ptr<Plan> subplan_;
+        std::vector<AggregateExpr> aggregates_;
+        std::vector<TabCol> sel_cols_;
 };
 
 // dml语句，包括insert; delete; update; select语句　

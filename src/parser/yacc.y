@@ -22,7 +22,7 @@ using namespace ast;
 
 // keywords
 %token SHOW TABLES CREATE TABLE DROP DESC INSERT INTO VALUES DELETE FROM ASC ORDER BY
-WHERE UPDATE SET SELECT INT BIGINT DATETIME CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE
+WHERE UPDATE SET SELECT INT BIGINT DATETIME CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE COUNT MAX MIN SUM AS
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
 
@@ -45,6 +45,8 @@ WHERE UPDATE SET SELECT INT BIGINT DATETIME CHAR FLOAT INDEX AND JOIN EXIT HELP 
 %type <sv_strs> tableList colNameList
 %type <sv_col> col
 %type <sv_cols> colList selector
+%type <sv_agg> aggregate_item
+%type <sv_aggs> aggregate_list
 %type <sv_set_clause> setClause
 %type <sv_set_clauses> setClauses
 %type <sv_cond> condition
@@ -52,6 +54,7 @@ WHERE UPDATE SET SELECT INT BIGINT DATETIME CHAR FLOAT INDEX AND JOIN EXIT HELP 
 %type <sv_orderby>  order_clause opt_order_clause
 %type <sv_orderby_dir> opt_asc_desc
 %type <sv_setKnobType> set_knob_type
+%type <sv_str> opt_alias
 
 %%
 start:
@@ -160,7 +163,11 @@ dml:
     }
     |   SELECT selector FROM tableList optWhereClause opt_order_clause
     {
-        $$ = std::make_shared<SelectStmt>($2, $4, $5, $6);
+        $$ = std::make_shared<SelectStmt>($2, std::vector<std::shared_ptr<AggFunc>>{}, $4, $5, $6);
+    }
+    |   SELECT aggregate_list FROM tableList optWhereClause opt_order_clause
+    {
+        $$ = std::make_shared<SelectStmt>(std::vector<std::shared_ptr<Col>>{}, $2, $4, $5, $6);
     }
     ;
 
@@ -356,6 +363,51 @@ selector:
         $$ = {};
     }
     |   colList
+    ;
+
+aggregate_list:
+        aggregate_item
+    {
+        $$ = std::vector<std::shared_ptr<AggFunc>>{$1};
+    }
+    |   aggregate_list ',' aggregate_item
+    {
+        $$.push_back($3);
+    }
+    ;
+
+aggregate_item:
+        COUNT '(' '*' ')' opt_alias
+    {
+        $$ = std::make_shared<AggFunc>(AggFunc_COUNT, true, nullptr, $5);
+    }
+    |   COUNT '(' col ')' opt_alias
+    {
+        $$ = std::make_shared<AggFunc>(AggFunc_COUNT, false, $3, $5);
+    }
+    |   MAX '(' col ')' opt_alias
+    {
+        $$ = std::make_shared<AggFunc>(AggFunc_MAX, false, $3, $5);
+    }
+    |   MIN '(' col ')' opt_alias
+    {
+        $$ = std::make_shared<AggFunc>(AggFunc_MIN, false, $3, $5);
+    }
+    |   SUM '(' col ')' opt_alias
+    {
+        $$ = std::make_shared<AggFunc>(AggFunc_SUM, false, $3, $5);
+    }
+    ;
+
+opt_alias:
+        AS colName
+    {
+        $$ = $2;
+    }
+    |   /* epsilon */
+    {
+        $$ = "";
+    }
     ;
 
 tableList:

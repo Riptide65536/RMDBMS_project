@@ -33,6 +33,13 @@ enum OrderByDir {
     OrderBy_DESC
 };
 
+enum AggFuncType {
+    AggFunc_COUNT,
+    AggFunc_MAX,
+    AggFunc_MIN,
+    AggFunc_SUM
+};
+
 enum SetKnobType {
     EnableNestLoop, EnableSortMerge
 };
@@ -175,6 +182,19 @@ struct BinaryExpr : public TreeNode {
             lhs(std::move(lhs_)), op(op_), rhs(std::move(rhs_)) {}
 };
 
+struct AggFunc : public TreeNode {
+    AggFuncType agg_type;
+    bool is_count_star;
+    std::shared_ptr<Col> col;
+    std::string alias;
+
+    AggFunc(AggFuncType agg_type_, bool is_count_star_, std::shared_ptr<Col> col_, std::string alias_) :
+            agg_type(agg_type_),
+            is_count_star(is_count_star_),
+            col(std::move(col_)),
+            alias(std::move(alias_)) {}
+};
+
 struct OrderBy : public TreeNode
 {
     std::shared_ptr<Col> cols;
@@ -223,21 +243,25 @@ struct JoinExpr : public TreeNode {
 
 struct SelectStmt : public TreeNode {
     std::vector<std::shared_ptr<Col>> cols;
+    std::vector<std::shared_ptr<AggFunc>> aggs;
     std::vector<std::string> tabs;
     std::vector<std::shared_ptr<BinaryExpr>> conds;
     std::vector<std::shared_ptr<JoinExpr>> jointree;
 
+    bool has_aggregate;
     
     bool has_sort;
     std::shared_ptr<OrderBy> order;
 
 
     SelectStmt(std::vector<std::shared_ptr<Col>> cols_,
+               std::vector<std::shared_ptr<AggFunc>> aggs_,
                std::vector<std::string> tabs_,
                std::vector<std::shared_ptr<BinaryExpr>> conds_,
                std::shared_ptr<OrderBy> order_) :
-            cols(std::move(cols_)), tabs(std::move(tabs_)), conds(std::move(conds_)), 
+            cols(std::move(cols_)), aggs(std::move(aggs_)), tabs(std::move(tabs_)), conds(std::move(conds_)), 
             order(std::move(order_)) {
+                has_aggregate = !aggs.empty();
                 has_sort = (bool)order;
             }
 };
@@ -283,9 +307,13 @@ struct SemValue {
     std::shared_ptr<BinaryExpr> sv_cond;
     std::vector<std::shared_ptr<BinaryExpr>> sv_conds;
 
+    std::shared_ptr<AggFunc> sv_agg;
+    std::vector<std::shared_ptr<AggFunc>> sv_aggs;
+
     std::shared_ptr<OrderBy> sv_orderby;
 
     SetKnobType sv_setKnobType;
+    AggFuncType sv_agg_type;
 };
 
 extern std::shared_ptr<ast::TreeNode> parse_tree;

@@ -23,6 +23,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution/executor_insert.h"
 #include "execution/executor_delete.h"
 #include "execution/execution_sort.h"
+#include "execution/executor_aggregate.h"
 #include "common/common.h"
 
 typedef enum portalTag{
@@ -69,9 +70,17 @@ class Portal
             switch(x->tag) {
                 case T_select:
                 {
-                    std::shared_ptr<ProjectionPlan> p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_);
-                    std::unique_ptr<AbstractExecutor> root= convert_plan_executor(p, context);
-                    return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(p->sel_cols_), std::move(root), plan);
+                    if (auto p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_)) {
+                        std::unique_ptr<AbstractExecutor> root = convert_plan_executor(p, context);
+                        return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(p->sel_cols_),
+                                                            std::move(root), plan);
+                    }
+                    if (auto a = std::dynamic_pointer_cast<AggregatePlan>(x->subplan_)) {
+                        std::unique_ptr<AbstractExecutor> root = convert_plan_executor(a, context);
+                        return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(a->sel_cols_),
+                                                            std::move(root), plan);
+                    }
+                    throw InternalError("Unexpected select plan type");
                 }
                     
                 case T_Update:
@@ -175,6 +184,8 @@ class Portal
         } else if(auto x = std::dynamic_pointer_cast<SortPlan>(plan)) {
             return std::make_unique<SortExecutor>(convert_plan_executor(x->subplan_, context), 
                                             x->sel_col_, x->is_desc_);
+        } else if(auto x = std::dynamic_pointer_cast<AggregatePlan>(plan)) {
+            return std::make_unique<AggregateExecutor>(convert_plan_executor(x->subplan_, context), x->aggregates_);
         }
         return nullptr;
     }

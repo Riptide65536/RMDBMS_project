@@ -64,6 +64,16 @@ private:
         return m.at(op);
     }
 
+    static std::string agg2str(AggFuncType type) {
+        static std::map<AggFuncType, std::string> m{
+                {AggFunc_COUNT, "COUNT"},
+                {AggFunc_MAX,   "MAX"},
+                {AggFunc_MIN,   "MIN"},
+                {AggFunc_SUM,   "SUM"},
+        };
+        return m.at(type);
+    }
+
     template<typename T>
     static void print_node_list(std::vector<T> nodes, int offset) {
         std::cout << offset2string(offset);
@@ -136,6 +146,17 @@ private:
             print_node(x->lhs, offset);
             print_val(op2str(x->op), offset);
             print_node(x->rhs, offset);
+        } else if (auto x = std::dynamic_pointer_cast<AggFunc>(node)) {
+            std::cout << "AGG_FUNC\n";
+            print_val(agg2str(x->agg_type), offset);
+            if (x->is_count_star) {
+                print_val(std::string("*"), offset);
+            } else {
+                print_node(x->col, offset);
+            }
+            if (!x->alias.empty()) {
+                print_val(x->alias, offset);
+            }
         } else if (auto x = std::dynamic_pointer_cast<InsertStmt>(node)) {
             std::cout << "INSERT\n";
             print_val(x->tab_name, offset);
@@ -151,7 +172,11 @@ private:
             print_node_list(x->conds, offset);
         } else if (auto x = std::dynamic_pointer_cast<SelectStmt>(node)) {
             std::cout << "SELECT\n";
-            print_node_list(x->cols, offset);
+            if (x->has_aggregate) {
+                print_node_list(x->aggs, offset);
+            } else {
+                print_node_list(x->cols, offset);
+            }
             print_val_list(x->tabs, offset);
             print_node_list(x->conds, offset);
         } else if (auto x = std::dynamic_pointer_cast<TxnBegin>(node)) {

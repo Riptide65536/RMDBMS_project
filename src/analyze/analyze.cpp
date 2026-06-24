@@ -27,6 +27,25 @@ bool is_compatible_type(ColType lhs_type, ColType rhs_type) {
     return lhs_numeric && rhs_numeric;
 }
 
+bool is_sum_supported_type(ColType type) {
+    return type == TYPE_INT || type == TYPE_BIGINT || type == TYPE_FLOAT;
+}
+
+std::string default_aggregate_alias(AggType type, const TabCol &col, bool is_count_star) {
+    switch (type) {
+        case AGG_COUNT:
+            return is_count_star ? "COUNT(*)" : "COUNT(" + col.col_name + ")";
+        case AGG_MAX:
+            return "MAX(" + col.col_name + ")";
+        case AGG_MIN:
+            return "MIN(" + col.col_name + ")";
+        case AGG_SUM:
+            return "SUM(" + col.col_name + ")";
+        default:
+            throw InternalError("Unexpected aggregate type");
+    }
+}
+
 Value cast_value_to_type(Value value, ColType target_type) {
     if (value.type == target_type) {
         return value;
@@ -87,24 +106,43 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             sm_manager_->db_.get_table(tab_name);
         }
 
-        // 处理target list，再target list中添加上表名，例如 a.id
-        for (auto &sv_sel_col : x->cols) {
-            TabCol sel_col = {.tab_name = sv_sel_col->tab_name, .col_name = sv_sel_col->col_name};
-            query->cols.push_back(sel_col);
-        }
-        
         std::vector<ColMeta> all_cols;
         get_all_cols(query->tables, all_cols);
-        if (query->cols.empty()) {
-            // select all columns
-            for (auto &col : all_cols) {
-                TabCol sel_col = {.tab_name = col.tab_name, .col_name = col.name};
-                query->cols.push_back(sel_col);
+
+        if (x->has_aggregate) {
+            query->has_aggregate = true;
+            for (const auto &sv_agg : x->aggs) {
+                AggregateExpr agg;
+                agg.type = convert_sv_agg_type(sv_agg->agg_type);
+                agg.is_count_star = sv_agg->is_count_star;
+                if (!sv_agg->is_count_star) {
+                    agg.col = {.tab_name = sv_agg->col->tab_name, .col_name = sv_agg->col->col_name};
+                    agg.col = check_column(all_cols, agg.col);
+                    auto col_meta = *sm_manager_->db_.get_table(agg.col.tab_name).get_col(agg.col.col_name);
+                    if (agg.type == AGG_SUM && !is_sum_supported_type(col_meta.type)) {
+                        throw IncompatibleTypeError("SUM", coltype2str(col_meta.type));
+                    }
+                }
+                agg.alias = sv_agg->alias.empty() ? default_aggregate_alias(agg.type, agg.col, agg.is_count_star)
+                                                  : sv_agg->alias;
+                query->aggregates.push_back(agg);
+                query->cols.push_back({.tab_name = "", .col_name = agg.alias});
             }
         } else {
-            // infer table name from column name
-            for (auto &sel_col : query->cols) {
-                sel_col = check_column(all_cols, sel_col);  // 列元数据校验
+            // 处理target list，再target list中添加上表名，例如 a.id
+            for (auto &sv_sel_col : x->cols) {
+                TabCol sel_col = {.tab_name = sv_sel_col->tab_name, .col_name = sv_sel_col->col_name};
+                query->cols.push_back(sel_col);
+            }
+            if (query->cols.empty()) {
+                for (auto &col : all_cols) {
+                    TabCol sel_col = {.tab_name = col.tab_name, .col_name = col.name};
+                    query->cols.push_back(sel_col);
+                }
+            } else {
+                for (auto &sel_col : query->cols) {
+                    sel_col = check_column(all_cols, sel_col);
+                }
             }
         }
         //处理where条件
@@ -252,4 +290,14 @@ CompOp Analyze::convert_sv_comp_op(ast::SvCompOp op) {
         {ast::SV_OP_GT, OP_GT}, {ast::SV_OP_LE, OP_LE}, {ast::SV_OP_GE, OP_GE},
     };
     return m.at(op);
+}
+
+AggType Analyze::convert_sv_agg_type(ast::AggFuncType type) {
+    std::map<ast::AggFuncType, AggType> m = {
+        {ast::AggFunc_COUNT, AGG_COUNT},
+        {ast::AggFunc_MAX, AGG_MAX},
+        {ast::AggFunc_MIN, AGG_MIN},
+        {ast::AggFunc_SUM, AGG_SUM},
+    };
+    return m.at(type);
 }
