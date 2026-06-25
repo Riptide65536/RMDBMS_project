@@ -13,6 +13,8 @@ See the Mulan PSL v2 for more details. */
 #include "record/rm_file_handle.h"
 #include "system/sm_manager.h"
 
+#include <vector>
+
 std::unordered_map<txn_id_t, Transaction *> TransactionManager::txn_map = {};
 
 namespace {
@@ -84,7 +86,8 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     }
 
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks_to_release(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks_to_release) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();
@@ -105,7 +108,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     if (txn == nullptr) {
         return;
     }
-    if (txn->get_state() == TransactionState::COMMITTED || txn->get_state() == TransactionState::ABORTED) {
+    if (txn->get_state() == TransactionState::COMMITTED) {
         return;
     }
 
@@ -155,7 +158,8 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     }
 
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks_to_release(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks_to_release) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();
