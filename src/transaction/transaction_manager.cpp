@@ -13,6 +13,8 @@ See the Mulan PSL v2 for more details. */
 #include "record/rm_file_handle.h"
 #include "system/sm_manager.h"
 
+#include <vector>
+
 std::unordered_map<txn_id_t, Transaction *> TransactionManager::txn_map = {};
 
 namespace {
@@ -58,6 +60,13 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
     }
     txn->set_start_ts(next_timestamp_++);
     txn->set_state(TransactionState::GROWING);
+    if (log_manager != nullptr) {
+        BeginLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
+        log_manager->flush_log_to_disk();
+    }
 
     std::unique_lock<std::mutex> lock(latch_);
     TransactionManager::txn_map[txn->get_transaction_id()] = txn;
@@ -83,16 +92,22 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
         write_set->pop_front();
     }
 
+    if (log_manager != nullptr) {
+        CommitLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
+        log_manager->flush_log_to_disk();
+    }
+
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks_to_release(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks_to_release) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();
     txn->get_index_latch_page_set()->clear();
     txn->get_index_deleted_page_set()->clear();
-    if (log_manager != nullptr) {
-        log_manager->flush_log_to_disk();
-    }
     txn->set_state(TransactionState::COMMITTED);
 }
 
@@ -105,7 +120,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     if (txn == nullptr) {
         return;
     }
-    if (txn->get_state() == TransactionState::COMMITTED || txn->get_state() == TransactionState::ABORTED) {
+    if (txn->get_state() == TransactionState::COMMITTED) {
         return;
     }
 
@@ -154,15 +169,21 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
         delete write_record;
     }
 
+    if (log_manager != nullptr) {
+        AbortLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
+        log_manager->flush_log_to_disk();
+    }
+
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks_to_release(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks_to_release) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();
     txn->get_index_latch_page_set()->clear();
     txn->get_index_deleted_page_set()->clear();
-    if (log_manager != nullptr) {
-        log_manager->flush_log_to_disk();
-    }
     txn->set_state(TransactionState::ABORTED);
 }

@@ -36,6 +36,9 @@ class DeleteExecutor : public AbstractExecutor {
         conds_ = conds;
         rids_ = rids;
         context_ = context;
+        if (context_ != nullptr && context_->lock_mgr_ != nullptr && context_->txn_ != nullptr) {
+            context_->lock_mgr_->lock_exclusive_on_table(context_->txn_, fh_->GetFd());
+        }
     }
 
     std::unique_ptr<RmRecord> Next() override {
@@ -43,6 +46,14 @@ class DeleteExecutor : public AbstractExecutor {
             auto record = fh_->get_record(rid, context_);
             if (context_ != nullptr && context_->txn_ != nullptr) {
                 context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *record));
+                if (context_->log_mgr_ != nullptr) {
+                    Rid log_rid = rid;
+                    DeleteLogRecord log_record(context_->txn_->get_transaction_id(), *record, log_rid, tab_name_);
+                    log_record.prev_lsn_ = context_->txn_->get_prev_lsn();
+                    lsn_t lsn = context_->log_mgr_->add_log_to_buffer(&log_record);
+                    context_->txn_->set_prev_lsn(lsn);
+                    context_->log_mgr_->flush_log_to_disk();
+                }
             }
             for (const auto &index : tab_.indexes) {
                 auto index_name = sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols);

@@ -140,6 +140,10 @@ void SmManager::open_db(const std::string& db_name) {
     ifs >> db_;
     ifs.close();
 
+    if (!disk_manager_->is_file(LOG_FILE_NAME)) {
+        disk_manager_->create_file(LOG_FILE_NAME);
+    }
+
     for (auto &entry : db_.tabs_) {
         const auto &tab_name = entry.first;
         auto &tab = entry.second;
