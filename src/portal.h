@@ -85,6 +85,10 @@ class Portal
                     
                 case T_Update:
                 {
+                    if (context != nullptr && context->lock_mgr_ != nullptr && context->txn_ != nullptr) {
+                        auto fh = sm_manager_->fhs_.at(x->tab_name_).get();
+                        context->lock_mgr_->lock_exclusive_on_table(context->txn_, fh->GetFd());
+                    }
                     std::unique_ptr<AbstractExecutor> scan= convert_plan_executor(x->subplan_, context);
                     std::vector<Rid> rids;
                     for (scan->beginTuple(); !scan->is_end(); scan->nextTuple()) {
@@ -96,6 +100,10 @@ class Portal
                 }
                 case T_Delete:
                 {
+                    if (context != nullptr && context->lock_mgr_ != nullptr && context->txn_ != nullptr) {
+                        auto fh = sm_manager_->fhs_.at(x->tab_name_).get();
+                        context->lock_mgr_->lock_exclusive_on_table(context->txn_, fh->GetFd());
+                    }
                     std::unique_ptr<AbstractExecutor> scan= convert_plan_executor(x->subplan_, context);
                     std::vector<Rid> rids;
                     for (scan->beginTuple(); !scan->is_end(); scan->nextTuple()) {

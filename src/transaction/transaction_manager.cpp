@@ -9,6 +9,7 @@ MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
 #include "transaction_manager.h"
+#include <vector>
 #include "execution/executor_utils.h"
 #include "record/rm_file_handle.h"
 #include "system/sm_manager.h"
@@ -84,7 +85,8 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     }
 
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();
@@ -155,7 +157,8 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     }
 
     auto lock_set = txn->get_lock_set();
-    for (const auto &lock_data_id : *lock_set) {
+    std::vector<LockDataId> locks(lock_set->begin(), lock_set->end());
+    for (const auto &lock_data_id : locks) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     lock_set->clear();

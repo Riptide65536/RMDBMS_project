@@ -62,6 +62,9 @@ class IndexScanExecutor : public AbstractExecutor {
         fh_ = sm_manager_->fhs_.at(tab_name_).get();
         cols_ = tab_.cols;
         len_ = cols_.back().offset + cols_.back().len;
+        if (context_ != nullptr && context_->lock_mgr_ != nullptr && context_->txn_ != nullptr) {
+            context_->lock_mgr_->lock_shared_on_table(context_->txn_, fh_->GetFd());
+        }
 
         std::map<CompOp, CompOp> swap_op = {
             {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT}, {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},

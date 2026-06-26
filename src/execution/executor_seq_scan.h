@@ -42,6 +42,9 @@ class SeqScanExecutor : public AbstractExecutor {
         len_ = cols_.back().offset + cols_.back().len;
 
         context_ = context;
+        if (context_ != nullptr && context_->lock_mgr_ != nullptr && context_->txn_ != nullptr) {
+            context_->lock_mgr_->lock_shared_on_table(context_->txn_, fh_->GetFd());
+        }
 
         fed_conds_ = conds_;
     }
