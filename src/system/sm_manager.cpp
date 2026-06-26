@@ -403,3 +403,30 @@ void SmManager::drop_index(const std::string& tab_name, const std::vector<ColMet
     }
     drop_index(tab_name, col_names, context);
 }
+
+void SmManager::rebuild_indexes() {
+    for (auto &entry : db_.tabs_) {
+        const auto &tab_name = entry.first;
+        auto &tab = entry.second;
+        auto fh = fhs_.at(tab_name).get();
+        for (const auto &index : tab.indexes) {
+            auto index_name = ix_manager_->get_index_name(tab_name, index.cols);
+            auto ih_it = ihs_.find(index_name);
+            if (ih_it != ihs_.end()) {
+                ix_manager_->close_index(ih_it->second.get());
+                ihs_.erase(ih_it);
+            }
+            if (ix_manager_->exists(tab_name, index.cols)) {
+                ix_manager_->destroy_index(tab_name, index.cols);
+            }
+            ix_manager_->create_index(tab_name, index.cols);
+            auto ih = ix_manager_->open_index(tab_name, index.cols);
+            for (RmScan scan(fh); !scan.is_end(); scan.next()) {
+                auto rec = fh->get_record(scan.rid(), nullptr);
+                auto key = build_index_key(index, *rec);
+                ih->insert_entry(key.data(), scan.rid(), nullptr);
+            }
+            ihs_[index_name] = std::move(ih);
+        }
+    }
+}

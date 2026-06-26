@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_abstract.h"
 #include "executor_utils.h"
 #include "index/ix.h"
+#include "recovery/log_manager.h"
 #include "system/sm.h"
 #include "transaction/txn_defs.h"
 
@@ -59,6 +60,13 @@ class InsertExecutor : public AbstractExecutor {
         // Insert into record file
         rid_ = fh_->insert_record(rec.data, context_);
         if (context_ != nullptr && context_->txn_ != nullptr) {
+            if (context_->log_mgr_ != nullptr) {
+                InsertLogRecord log_record(context_->txn_->get_transaction_id(), rec, rid_, tab_name_);
+                log_record.prev_lsn_ = context_->txn_->get_prev_lsn();
+                lsn_t lsn = context_->log_mgr_->add_log_to_buffer(&log_record);
+                context_->txn_->set_prev_lsn(lsn);
+                context_->log_mgr_->flush_log_to_disk();
+            }
             context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
         }
         

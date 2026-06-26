@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_abstract.h"
 #include "executor_utils.h"
 #include "index/ix.h"
+#include "recovery/log_manager.h"
 #include "system/sm.h"
 #include "transaction/txn_defs.h"
 
@@ -84,6 +85,15 @@ class UpdateExecutor : public AbstractExecutor {
                 }
             }
 
+            if (context_ != nullptr && context_->txn_ != nullptr && context_->log_mgr_ != nullptr) {
+                Rid log_rid = rid;
+                UpdateLogRecord log_record(context_->txn_->get_transaction_id(), *old_record, new_record, log_rid,
+                                           tab_name_);
+                log_record.prev_lsn_ = context_->txn_->get_prev_lsn();
+                lsn_t lsn = context_->log_mgr_->add_log_to_buffer(&log_record);
+                context_->txn_->set_prev_lsn(lsn);
+                context_->log_mgr_->flush_log_to_disk();
+            }
             fh_->update_record(rid, new_record.data, context_);
         }
         return nullptr;

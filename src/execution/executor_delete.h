@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_abstract.h"
 #include "executor_utils.h"
 #include "index/ix.h"
+#include "recovery/log_manager.h"
 #include "system/sm.h"
 #include "transaction/txn_defs.h"
 
@@ -45,6 +46,14 @@ class DeleteExecutor : public AbstractExecutor {
         for (const auto &rid : rids_) {
             auto record = fh_->get_record(rid, context_);
             if (context_ != nullptr && context_->txn_ != nullptr) {
+                if (context_->log_mgr_ != nullptr) {
+                    Rid log_rid = rid;
+                    DeleteLogRecord log_record(context_->txn_->get_transaction_id(), *record, log_rid, tab_name_);
+                    log_record.prev_lsn_ = context_->txn_->get_prev_lsn();
+                    lsn_t lsn = context_->log_mgr_->add_log_to_buffer(&log_record);
+                    context_->txn_->set_prev_lsn(lsn);
+                    context_->log_mgr_->flush_log_to_disk();
+                }
                 context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *record));
             }
             for (const auto &index : tab_.indexes) {

@@ -53,12 +53,17 @@ void insert_index_entries(SmManager *sm_manager, const TabMeta &tab, const std::
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
-    (void)log_manager;
     if (txn == nullptr) {
         txn = new Transaction(next_txn_id_++);
     }
     txn->set_start_ts(next_timestamp_++);
     txn->set_state(TransactionState::GROWING);
+    if (log_manager != nullptr) {
+        BeginLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
+    }
 
     std::unique_lock<std::mutex> lock(latch_);
     TransactionManager::txn_map[txn->get_transaction_id()] = txn;
@@ -78,6 +83,14 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
         return;
     }
 
+    if (log_manager != nullptr) {
+        CommitLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
+        log_manager->flush_log_to_disk();
+    }
+
     auto write_set = txn->get_write_set();
     while (!write_set->empty()) {
         delete write_set->front();
@@ -92,9 +105,6 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     lock_set->clear();
     txn->get_index_latch_page_set()->clear();
     txn->get_index_deleted_page_set()->clear();
-    if (log_manager != nullptr) {
-        log_manager->flush_log_to_disk();
-    }
     txn->set_state(TransactionState::COMMITTED);
 }
 
@@ -165,6 +175,10 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     txn->get_index_latch_page_set()->clear();
     txn->get_index_deleted_page_set()->clear();
     if (log_manager != nullptr) {
+        AbortLogRecord log_record(txn->get_transaction_id());
+        log_record.prev_lsn_ = txn->get_prev_lsn();
+        lsn_t lsn = log_manager->add_log_to_buffer(&log_record);
+        txn->set_prev_lsn(lsn);
         log_manager->flush_log_to_disk();
     }
     txn->set_state(TransactionState::ABORTED);
