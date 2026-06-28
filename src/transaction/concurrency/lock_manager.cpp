@@ -83,7 +83,6 @@ bool LockManager::lock(Transaction* txn, const LockDataId &lock_data_id, LockMod
         return true;
     }
     if (txn->get_state() == TransactionState::SHRINKING) {
-        txn->set_state(TransactionState::ABORTED);
         throw TransactionAbortException(txn->get_transaction_id(), AbortReason::LOCK_ON_SHIRINKING);
     }
 
@@ -112,7 +111,6 @@ bool LockManager::lock(Transaction* txn, const LockDataId &lock_data_id, LockMod
             continue;
         }
         if (!is_compatible(request.lock_mode_, lock_mode)) {
-            txn->set_state(TransactionState::ABORTED);
             throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
         }
     }
