@@ -79,9 +79,8 @@ class RmManager {
                                   sizeof(file_handle->file_hdr_));
         // 缓冲区的所有页刷到磁盘，注意这句话必须写在close_file前面
         buffer_pool_manager_->flush_all_pages(file_handle->fd_);
-        page_id_t page_cnt = disk_manager_->get_fd2pageno(file_handle->fd_);
-        for (page_id_t page_no = 0; page_no < page_cnt; ++page_no) {
-            buffer_pool_manager_->delete_page(PageId{file_handle->fd_, page_no});
+        if (!buffer_pool_manager_->delete_all_pages(file_handle->fd_)) {
+            throw InternalError("RmManager::close_file Error");
         }
         disk_manager_->close_file(file_handle->fd_);
     }

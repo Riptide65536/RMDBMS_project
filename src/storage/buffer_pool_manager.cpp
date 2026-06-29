@@ -176,6 +176,47 @@ bool BufferPoolManager::delete_page(PageId page_id) {
 }
 
 /**
+ * @description: 从buffer_pool中删除指定文件已缓存的所有页
+ * @return {bool} 若存在仍被pin住的页面则返回false，否则返回true
+ * @param {int} fd 文件句柄
+ */
+bool BufferPoolManager::delete_all_pages(int fd) {
+    std::scoped_lock lock{latch_};
+
+    std::vector<PageId> page_ids;
+    page_ids.reserve(page_table_.size());
+    for (const auto &entry : page_table_) {
+        if (entry.first.fd == fd) {
+            page_ids.push_back(entry.first);
+        }
+    }
+
+    for (const auto &page_id : page_ids) {
+        auto iter = page_table_.find(page_id);
+        if (iter == page_table_.end()) {
+            continue;
+        }
+        Page *page = &pages_[iter->second];
+        if (page->pin_count_ != 0) {
+            return false;
+        }
+    }
+
+    for (const auto &page_id : page_ids) {
+        auto iter = page_table_.find(page_id);
+        if (iter == page_table_.end()) {
+            continue;
+        }
+        frame_id_t frame_id = iter->second;
+        Page *page = &pages_[frame_id];
+        replacer_->pin(frame_id);
+        update_page(page, PageId{fd, INVALID_PAGE_ID}, frame_id);
+        free_list_.push_back(frame_id);
+    }
+    return true;
+}
+
+/**
  * @description: 将buffer_pool中的所有页写回到磁盘
  * @param {int} fd 文件句柄
  */

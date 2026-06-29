@@ -74,6 +74,8 @@ class BufferPoolManager {
 
     bool delete_page(PageId page_id);
 
+    bool delete_all_pages(int fd);
+
     void flush_all_pages(int fd);
 
    private:
